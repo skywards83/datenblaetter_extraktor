@@ -4,6 +4,19 @@ import os
 from google.cloud import documentai
 from google.cloud import storage
 
+from flask import Flask, request
+
+app = Flask(__name__)
+
+@app.route("/", methods=["POST"])
+def http_entrypoint():
+    # Cloud Functions (2nd gen) und Cloud Run schicken das Event als JSON im Body
+    event = request.get_json(force=True)
+    # Kontext ist optional, kann leer bleiben
+    context = {}
+    process_document_from_gcs(event, context)
+    return ("", 204)
+
 def process_document_from_gcs(event, context):
     """
     Diese Cloud Function wird durch einen Datei-Upload in einen Google Cloud Storage
@@ -95,4 +108,3 @@ def process_document_from_gcs(event, context):
 
     except Exception as e:
         print(f"❌ Fehler beim Speichern der Ergebnisdatei: {e}")
-
