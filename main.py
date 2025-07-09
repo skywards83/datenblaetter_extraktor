@@ -56,7 +56,11 @@ def process_document_from_gcs(event, context):
     # --- 3. Document AI und Storage Clients initialisieren ---
     # Es wird empfohlen, Clients innerhalb der Funktion zu initialisieren.
     storage_client = storage.Client()
-    docai_client = documentai.DocumentProcessorServiceClient()
+    # WICHTIG: Den API-Endpunkt explizit basierend auf der Location setzen.
+    # Dies stellt sicher, dass der Client mit der richtigen Google Cloud Region spricht.
+    opts = {"api_endpoint": f"{location}-documentai.googleapis.com"}
+    docai_client = documentai.DocumentProcessorServiceClient(client_options=opts)
+ 
 
     # Den vollständigen Pfad zum Document AI Prozessor zusammenbauen.
     processor_path = docai_client.processor_path(project_id, location, processor_id)
