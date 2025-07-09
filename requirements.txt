@@ -1,0 +1,5 @@
+# Benötigt für die Interaktion mit der Document AI API
+google-cloud-documentai
+
+# Benötigt für das Lesen und Schreiben von Dateien in Cloud Storage
+google-cloud-storage
