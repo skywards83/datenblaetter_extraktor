@@ -3,3 +3,6 @@ google-cloud-documentai
 
 # Benötigt für das Lesen und Schreiben von Dateien in Cloud Storage
 google-cloud-storage
+
+# Benötigt, um den Code als Funktion in Cloud Run auszuführen
+functions-framework
