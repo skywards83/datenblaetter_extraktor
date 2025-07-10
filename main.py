@@ -3,21 +3,34 @@
 import os
 from google.cloud import documentai
 from google.cloud import storage
+import json
+import time
 
 from flask import Flask, request
 
 app = Flask(__name__)
 
+# Globaler Cache für verarbeitete Events (in Produktionsumgebung sollte Redis/Memcache verwendet werden)
+processed_events = {}
+
 @app.route("/", methods=["POST"])
 def http_entrypoint():
     # Cloud Functions (2nd gen) und Cloud Run schicken das Event als JSON im Body
     event = request.get_json(force=True)
+    
+    # Event-ID für Deduplizierung extrahieren
+    event_id = None
+    if 'ce-eventid' in request.headers:
+        event_id = request.headers['ce-eventid']
+    elif 'eventId' in event:
+        event_id = event['eventId']
+    
     # Kontext ist optional, kann leer bleiben
     context = {}
-    process_document_from_gcs(event, context)
+    process_document_from_gcs(event, context, event_id)
     return ("", 204)
 
-def process_document_from_gcs(event, context):
+def process_document_from_gcs(event, context, event_id=None):
     """
     Diese Cloud Function wird durch einen Datei-Upload in einen Google Cloud Storage
     Bucket ausgelöst. Sie analysiert das Dokument mit Document AI und speichert
@@ -47,6 +60,27 @@ def process_document_from_gcs(event, context):
     content_type = event.get("contentType", "")
 
     print(f"✅ Datei erkannt: gs://{input_bucket_name}/{file_name}")
+    
+    # Event-Deduplizierung - verhindert mehrfache Verarbeitung desselben Events
+    if event_id:
+        cache_key = f"{event_id}_{input_bucket_name}_{file_name}"
+        current_time = time.time()
+        
+        # Prüfen, ob dieses Event bereits verarbeitet wurde (Cache für 1 Stunde)
+        if cache_key in processed_events:
+            if current_time - processed_events[cache_key] < 3600:  # 1 Stunde
+                print(f"⚠️ Event {event_id} bereits verarbeitet. Überspringe.")
+                return
+        
+        # Event als verarbeitet markieren
+        processed_events[cache_key] = current_time
+        
+        # Alte Einträge aus dem Cache entfernen (älter als 1 Stunde)
+        to_remove = [k for k, v in processed_events.items() if current_time - v > 3600]
+        for k in to_remove:
+            del processed_events[k]
+        
+        print(f"🔄 Verarbeite Event {event_id}")
 
     # Prüfen, ob es sich um den Output-Bucket handelt - wenn ja, ignorieren
     if input_bucket_name == output_bucket_name:
