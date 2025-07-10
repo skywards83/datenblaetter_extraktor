@@ -61,22 +61,50 @@ def process_document_from_gcs(event, context, event_id=None):
 
     print(f"✅ Datei erkannt: gs://{input_bucket_name}/{file_name}")
     
-    # Event-Deduplizierung - verhindert mehrfache Verarbeitung desselben Events
+    # Prüfen, ob es sich um den Output-Bucket handelt - wenn ja, ignorieren
+    if input_bucket_name == output_bucket_name:
+        print(f"⚠️ Datei stammt aus dem Output-Bucket ({output_bucket_name}). Verarbeitung wird übersprungen.")
+        return
+
+    # Prüfen, ob die Datei bereits verarbeitet wurde (hat .txt Endung oder enthält "_verarbeitet")
+    if file_name.endswith('.txt') or '_verarbeitet' in file_name:
+        print(f"⚠️ Datei '{file_name}' scheint bereits verarbeitet zu sein. Verarbeitung wird übersprungen.")
+        return
+
+    # Sicherstellen, dass nur PDF-Dateien verarbeitet werden, um Fehler zu vermeiden.
+    if not content_type == "application/pdf":
+        print(f"⚠️ Datei '{file_name}' ist keine PDF-Datei ({content_type}). Verarbeitung wird übersprungen.")
+        return
+
+    # --- 3. Document AI und Storage Clients initialisieren ---
+    storage_client = storage.Client()
+    
+    # **WICHTIG: Zuerst prüfen, ob die Ausgabedatei bereits existiert**
+    # Das ist die dauerhafte Prüfung, die unabhängig vom Event-Cache funktioniert
+    output_filename = f"{os.path.splitext(file_name)[0]}.txt"
+    output_bucket = storage_client.bucket(output_bucket_name)
+    output_blob = output_bucket.blob(output_filename)
+    
+    if output_blob.exists():
+        print(f"⚠️ Ausgabedatei '{output_filename}' existiert bereits. Verarbeitung wird übersprungen.")
+        return
+
+    # Event-Deduplizierung - verhindert mehrfache Verarbeitung desselben Events (nur für kurze Zeit)
     if event_id:
         cache_key = f"{event_id}_{input_bucket_name}_{file_name}"
         current_time = time.time()
         
-        # Prüfen, ob dieses Event bereits verarbeitet wurde (Cache für 1 Stunde)
+        # Prüfen, ob dieses Event bereits verarbeitet wurde (Cache für 10 Minuten)
         if cache_key in processed_events:
-            if current_time - processed_events[cache_key] < 3600:  # 1 Stunde
+            if current_time - processed_events[cache_key] < 600:  # 10 Minuten
                 print(f"⚠️ Event {event_id} bereits verarbeitet. Überspringe.")
                 return
         
         # Event als verarbeitet markieren
         processed_events[cache_key] = current_time
         
-        # Alte Einträge aus dem Cache entfernen (älter als 1 Stunde)
-        to_remove = [k for k, v in processed_events.items() if current_time - v > 3600]
+        # Alte Einträge aus dem Cache entfernen (älter als 10 Minuten)
+        to_remove = [k for k, v in processed_events.items() if current_time - v > 600]
         for k in to_remove:
             del processed_events[k]
         
@@ -125,15 +153,6 @@ def process_document_from_gcs(event, context, event_id=None):
         input_blob = input_bucket.blob(file_name)
         image_content = input_blob.download_as_bytes()
 
-        # Prüfen, ob die Ausgabedatei bereits existiert
-        output_filename = f"{os.path.splitext(file_name)[0]}.txt"
-        output_bucket = storage_client.bucket(output_bucket_name)
-        output_blob = output_bucket.blob(output_filename)
-        
-        if output_blob.exists():
-            print(f"⚠️ Ausgabedatei '{output_filename}' existiert bereits. Verarbeitung wird übersprungen.")
-            return
-
         # Das Dokument für die API-Anfrage vorbereiten.
         raw_document = documentai.RawDocument(
             content=image_content,
@@ -171,5 +190,16 @@ def process_document_from_gcs(event, context, event_id=None):
         
         print(f"🎉 Ergebnis erfolgreich in gs://{output_bucket_name}/{output_filename} gespeichert.")
 
+        # --- 6. Eingangsdatei löschen nach erfolgreicher Verarbeitung ---
+        try:
+            input_bucket = storage_client.bucket(input_bucket_name)
+            input_blob = input_bucket.blob(file_name)
+            input_blob.delete()
+            print(f"🗑️ Eingangsdatei gs://{input_bucket_name}/{file_name} erfolgreich gelöscht.")
+        except Exception as delete_error:
+            print(f"⚠️ Warnung: Eingangsdatei konnte nicht gelöscht werden: {delete_error}")
+            # Fehler beim Löschen ist nicht kritisch, da das Dokument bereits verarbeitet wurde
+
     except Exception as e:
         print(f"❌ Fehler beim Speichern der Ergebnisdatei: {e}")
+        # Eingangsdatei NICHT löschen, wenn die Verarbeitung fehlgeschlagen ist

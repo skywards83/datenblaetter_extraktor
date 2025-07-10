@@ -6,6 +6,3 @@ google-cloud-storage
 
 # Benötigt, um den Code als Funktion in Cloud Run auszuführen
 functions-framework
-
-# Für persistente Event-Deduplizierung
-redis
