@@ -48,6 +48,16 @@ def process_document_from_gcs(event, context):
 
     print(f"✅ Datei erkannt: gs://{input_bucket_name}/{file_name}")
 
+    # Prüfen, ob es sich um den Output-Bucket handelt - wenn ja, ignorieren
+    if input_bucket_name == output_bucket_name:
+        print(f"⚠️ Datei stammt aus dem Output-Bucket ({output_bucket_name}). Verarbeitung wird übersprungen.")
+        return
+
+    # Prüfen, ob die Datei bereits verarbeitet wurde (hat .txt Endung oder enthält "_verarbeitet")
+    if file_name.endswith('.txt') or '_verarbeitet' in file_name:
+        print(f"⚠️ Datei '{file_name}' scheint bereits verarbeitet zu sein. Verarbeitung wird übersprungen.")
+        return
+
     # Sicherstellen, dass nur PDF-Dateien verarbeitet werden, um Fehler zu vermeiden.
     if not content_type == "application/pdf":
         print(f"⚠️ Datei '{file_name}' ist keine PDF-Datei ({content_type}). Verarbeitung wird übersprungen.")
@@ -80,6 +90,15 @@ def process_document_from_gcs(event, context):
         input_bucket = storage_client.bucket(input_bucket_name)
         input_blob = input_bucket.blob(file_name)
         image_content = input_blob.download_as_bytes()
+
+        # Prüfen, ob die Ausgabedatei bereits existiert
+        output_filename = f"{os.path.splitext(file_name)[0]}.txt"
+        output_bucket = storage_client.bucket(output_bucket_name)
+        output_blob = output_bucket.blob(output_filename)
+        
+        if output_blob.exists():
+            print(f"⚠️ Ausgabedatei '{output_filename}' existiert bereits. Verarbeitung wird übersprungen.")
+            return
 
         # Das Dokument für die API-Anfrage vorbereiten.
         raw_document = documentai.RawDocument(
