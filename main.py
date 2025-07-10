@@ -173,22 +173,61 @@ def process_document_from_gcs(event, context, event_id=None):
         return
 
     # --- 5. Ergebnis in den Output-Bucket speichern ---
-    # Den extrahierten Text aus dem Ergebnisobjekt holen.
-    # Für Formular-Prozessoren könnten Sie hier `document.entities` durchlaufen.
-    extracted_text = document.text
-    print(f"🔍 {len(extracted_text)} Zeichen extrahiert.")
+    # Strukturierte Daten aus dem trainierten Modell extrahieren
+    extracted_data = {
+        "document_info": {
+            "filename": file_name,
+            "processing_time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "processor_id": processor_id,
+            "total_pages": len(document.pages) if document.pages else 0
+        },
+        "entities": {},
+        "raw_text": document.text
+    }
 
-    # Den Dateinamen für die Ausgabedatei festlegen (z.B. original.pdf -> original.txt).
-    output_filename = f"{os.path.splitext(file_name)[0]}.txt"
+    # Entitäten aus dem trainierten Modell extrahieren
+    if document.entities:
+        print(f"🔍 {len(document.entities)} Entitäten gefunden:")
+        for entity in document.entities:
+            entity_type = entity.type_
+            entity_value = entity.mention_text
+            confidence = entity.confidence
+            
+            print(f"  - {entity_type}: {entity_value} (Konfidenz: {confidence:.2f})")
+            
+            # Entität zu den extrahierten Daten hinzufügen
+            if entity_type not in extracted_data["entities"]:
+                extracted_data["entities"][entity_type] = []
+            
+            extracted_data["entities"][entity_type].append({
+                "value": entity_value,
+                "confidence": confidence,
+                "normalized_value": entity.normalized_value.text if entity.normalized_value else None
+            })
+    else:
+        print("⚠️ Keine Entitäten gefunden. Möglicherweise ist das Modell noch nicht trainiert.")
+
+    # Zusätzliche Dokumenteigenschaften extrahieren
+    if document.pages:
+        extracted_data["document_info"]["dimensions"] = {
+            "width": document.pages[0].dimension.width,
+            "height": document.pages[0].dimension.height,
+            "unit": document.pages[0].dimension.unit
+        }
+
+    # Den Dateinamen für die Ausgabedatei festlegen (z.B. original.pdf -> original.json)
+    output_filename = f"{os.path.splitext(file_name)[0]}.json"
     
     try:
         output_bucket = storage_client.bucket(output_bucket_name)
         output_blob = output_bucket.blob(output_filename)
         
-        # Den extrahierten Text in die neue Datei hochladen.
-        output_blob.upload_from_string(extracted_text, content_type="text/plain; charset=utf-8")
+        # Die strukturierten Daten als JSON hochladen
+        json_content = json.dumps(extracted_data, ensure_ascii=False, indent=2)
+        output_blob.upload_from_string(json_content, content_type="application/json; charset=utf-8")
         
-        print(f"🎉 Ergebnis erfolgreich in gs://{output_bucket_name}/{output_filename} gespeichert.")
+        print(f"🎉 Strukturierte Daten erfolgreich in gs://{output_bucket_name}/{output_filename} gespeichert.")
+        print(f"📊 Extrahierte Entitätstypen: {list(extracted_data['entities'].keys())}")
 
         # --- 6. Eingangsdatei löschen nach erfolgreicher Verarbeitung ---
         try:
